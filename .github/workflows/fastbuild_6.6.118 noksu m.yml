@@ -6,7 +6,7 @@ env:
   KERNEL_VERSION: '7.2'
   SUB_VERSION: '11'
   KERNEL_NAME: ''
-  CCACHE_KEY: ccache-ecsv4-6.6.118
+  CCACHE_KEY: ccache-ecsv4-7.2.11
 
 on:
   workflow_dispatch:
