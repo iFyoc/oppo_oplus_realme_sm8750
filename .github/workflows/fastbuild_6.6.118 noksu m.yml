@@ -2,7 +2,7 @@ name: 6.6.118 欧加真OKI内核 nokernelsu挂载
 
 env:
   TZ: Asia/Shanghai
-  ANDROID_VERSION: 'android18'
+  ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '7.2'
   SUB_VERSION: '11'
   KERNEL_NAME: ''
