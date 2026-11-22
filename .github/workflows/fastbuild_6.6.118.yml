@@ -556,6 +556,43 @@ jobs:
           fi
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
+
+      # ============================================================
+      # 【新增步骤】修复 libbpf 在 Clang 18 下的编译警告
+      # 问题：tools/lib/bpf/libbpf.c:11255 报
+      #   error: assigning to 'char *' from 'const char *' discards qualifiers
+      #   被 -Werror 升级为错误，导致 tools/bpf/resolve_btfids 编译失败
+      # 修复：方案A(给 libbpf Makefile 加 EXTRA_CFLAGS) + 方案B(直接改源码强制类型转换) 双保险
+      # 说明：KCFLAGS 的 -Wno-error 只作用于内核本体编译，管不到 host tools，
+      #       所以必须单独处理 tools/lib/bpf。
+      # ============================================================
+      - name: 修复 libbpf 在 Clang 18 下的编译警告
+        run: |
+          cd kernel_workspace/common
+
+          # --- 方案 A：给 tools/lib/bpf/Makefile 追加 EXTRA_CFLAGS ---
+          # EXTRA_CFLAGS 在 tools/build/Makefile.build 的编译命令中排在 CFLAGS 之后，
+          # 能压过 tools/lib/bpf/Makefile 里自带的 -Werror，且只影响 libbpf。
+          if ! grep -q "Wno-incompatible-pointer-types-discards-qualifiers" tools/lib/bpf/Makefile; then
+            echo '' >> tools/lib/bpf/Makefile
+            echo 'EXTRA_CFLAGS += -Wno-incompatible-pointer-types-discards-qualifiers' >> tools/lib/bpf/Makefile
+            echo "✅ 已追加 EXTRA_CFLAGS 到 tools/lib/bpf/Makefile"
+          else
+            echo "ℹ️ tools/lib/bpf/Makefile 已包含该选项，跳过"
+          fi
+
+          # --- 方案 B：兜底 patch 源码(防止 Makefile 结构变化使 A 失效) ---
+          if grep -q "next_path = strchr(s, ':');" tools/lib/bpf/libbpf.c; then
+            sed -i "s|next_path = strchr(s, ':');|next_path = (char *)strchr(s, ':');|" tools/lib/bpf/libbpf.c
+            echo "✅ 已 patch tools/lib/bpf/libbpf.c (强制类型转换)"
+          else
+            echo "ℹ️ libbpf.c 未匹配到目标行(可能已修复或版本不同)，跳过"
+          fi
+
+          # 验证
+          echo "--- 验证 ---"
+          tail -n 3 tools/lib/bpf/Makefile
+          grep -n "next_path = .*strchr" tools/lib/bpf/libbpf.c || true
            
       - name: 构建内核
         run: |
@@ -579,7 +616,9 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           export CCACHE_MAXSIZE="3G"
           export CCACHE_IS_KERNEL_COMPILING="true"
-          echo "sloppiness = file_stat_matches,include_file_ctime,include_file_mtime,pch_defines,file_macro,time_macros" >> "$CCACHE_DIR/ccache.conf"
+          # ccache.conf 幂等写入（避免多次运行重复追加 sloppiness 行）
+          grep -q "^sloppiness" "$CCACHE_DIR/ccache.conf" 2>/dev/null || \
+            echo "sloppiness = file_stat_matches,include_file_ctime,include_file_mtime,pch_defines,file_macro,time_macros" >> "$CCACHE_DIR/ccache.conf"
           
           cd kernel_workspace/common
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so
